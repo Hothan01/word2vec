@@ -153,7 +153,7 @@ def get_path(source, root):
         while node_tmp != root: #根节点有向量，但没有编码
             code_path.append(node_tmp.HuffmanCode)
             node_tmp = node_tmp.father
-            vec_path.append(node_tmp.weight)
+            vec_path.append(node_tmp)   # 存储的是有向量的非叶子节点
 
         word = node.word
         word_Huffman_path_vec[word] = vec_path
@@ -169,11 +169,14 @@ def CB_HS(root, source):
     for index in range(len(words_corpus)):
         context = get_windows(index)
         word_center = words_corpus[index]
-        vec_path = word_Huffman_path_vec[word_center]
-        code_path = word_Huffman_path_vec[word_center]
+        vec_path = word_Huffman_path_vec[word_center]   # 向量非叶子节点列表
+        code_path = word_Huffman_path_code[word_center]   # Huffman编码列表
+
         global neule   # e
         neule = np.zeros(m_length)
+
         Xw = np.zeros(m_length)
+
         for item1 in context:
             Xw = Xw + word_vec[item1]   # 词向量之和
 
@@ -181,19 +184,23 @@ def CB_HS(root, source):
         for i in range(Lw_length):
             j = Lw_length - i - 1
 
-            x_vec = np.dot(Xw, vec_path[j])
+            x_vec = np.dot(Xw, vec_path[j].weight)
             q = 1/(1 + np.exp(-1 * x_vec))
 
             g = p_learning * (1 - code_path[j] - q)
 
-            neule = neule + g * vec_path[j]
+            neule = neule + g * vec_path[j].weight
 
-            vec_path[j] = vec_path[j] + g * Xw
+            vec_path[j].weight = vec_path[j].weight + g * Xw
 
         for item2 in context:
             word_vec[item2] = word_vec[item2] + neule
 
             # 不知道 += 像上面这样写对不对
+            '''
+                问题1：这些词向量在改变后，无法更新到之前的节点上
+                    只因为vec_path存储的是权值向量，而不是那些非叶子节点，
+            '''
 
 
 if __name__ == '__main__':
