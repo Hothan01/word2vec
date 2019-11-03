@@ -3,27 +3,27 @@
 import numpy as np
 import math
 import random
+import time
 
 words_corpus = []    # 语料 ：存储所有的词，不管重复与否
 words_diff = []   #词汇表
 word_times = {}  # 词汇表以及每个词对应的词频
 word_vec = {}   # 词汇表词向量，字典类型
 word_vec_help = {}   # 词的辅助向量，即syn1neg
-word_Huffman_path_vec = {}   # 叶子节点的Huffman路径节点向量
-word_Huffman_path_code = {}   # 叶子节点的Huffman路径节点编码
 m_length = 100   # 词向量的维度
-p_learning = 0.01   # 学习率
+p_learning = 0.025   # 学习率 skip模式下默认为0.025
 window_length = 3   # 窗口大小
-min_time = 3   # 最⼩词频阈值（目前没有用到）
 count_word_len = {}   # 统计词汇表的每一个Lk,即len(wj)之和
 NEG = 5   # NEG(w)的大小
 distance_word_len = {}   #记录每个Lk的区间大小，只保存最后一个值
 per_distance = {}   # 记录每一个单词的距离大小
 NEG_M= 100000000   # M的大小
+min_count = 5   # 最小词频阈值，低于这个频率的词会被移除词汇表
 
 
 # 统计词频，统计无重复单词
 def WordCounter():
+    print("WordCounter")
     filename = "sentence.txt"   # 当前目录下
     fr = open(filename)
 
@@ -41,20 +41,20 @@ def WordCounter():
     # 去重
     for item in words_corpus:
         if item not in words_diff:
-            words_diff.append(item)
+            time_count = words_corpus.count(item)
+            if time_count > min_count:
+                words_diff.append(item)  # 词汇表
+                word_times[item] = time_count  # 记录词与其对应的词频
 
     print("语料库大小：",len(words_corpus))    #语料库大小
     print("词汇表大小：",len(words_diff))   # 词汇表
     #获取词频(并没有去掉频率过低的单词，例如为1)
 
-    #以字典的形式保存单词以及对应的词频
-    for item in words_diff:
-        word_times[item] = words_corpus.count(item)
-
     pass
 
 #词向量初始化，辅助向量初始化
 def initwords():
+    print("initwords")
     for item in words_diff:
         word_vec[item] = np.random.random((1, m_length))[0]/m_length
         #代表生成 1 行 m_length 列的浮点数，浮点数都是从0-1中随机。
@@ -69,19 +69,29 @@ def initwords():
 #得到2*window_length 个上下文词
 def get_windows(center):
     res_context = []
-    for index in range(window_length): # 前面的词
-        i = center - (index + 1)
+
+    for index in range(1, len(words_corpus)-1): # 前面的词
+        i = center - index
         if i >= 0:
-            res_context.append(words_corpus[i])
-    for index in range(window_length): # 后面的词
-        i = center + (index + 1)
-        if i <= len(words_corpus) - 1:
-            res_context.append(words_corpus[i])
+            if words_corpus[i] in words_diff:
+                res_context.append(words_corpus[i])
+
+        if len(res_context) == 2 * window_length:
+            break
+
+        j = center + index
+        if j <= len(words_corpus) - 1:
+            if words_corpus[j] in words_diff:
+                res_context.append(words_corpus[j])
+
+        if len(res_context) == 2 * window_length:
+            break
 
     return res_context   # 返回的是word 列表
 
 #对负采样的词汇表进行带权初始化
 def initweight():
+    print("initweight()")
     sum = 0
     for item in words_diff:
         sum = sum + math.pow(word_times[item], 0.75)   # 计算词频之和
@@ -114,48 +124,62 @@ def choice_NEG(target_word):
 
     return list_NEG
 
+def sigmoid(inx):
+    if inx >= 0:      #对sigmoid函数的优化，避免了出现极大的数据溢出
+        return 1.0 /(1 + np.exp(-inx))
+    else:
+        return np.exp(inx)/(1 + np.exp(inx))
+
 def SK_NS():
+    print("SK_NS()")
     initweight()
 
     for index in range(len(words_corpus)):   # 开始选词，找窗口
 
-        context = get_windows(index)   # 找窗口
+        # 只有词频超过这个阀值的词才能被训练
+        if words_corpus[index] in words_diff:
 
-        word_center = words_corpus[index]   # 中心词
-        NEG_words = choice_NEG(word_center)   # 负样本词和中心词的集合
+            context = get_windows(index)   # 找窗口
 
-        for item2 in context:
+            word_center = words_corpus[index]   # 中心词
+            NEG_words = choice_NEG(word_center)   # 负样本词和中心词的集合
 
-            global neule   # e
-            neule = np.zeros(m_length)
+            for item2 in context:
 
-            Xw = word_vec[item2]   # V(w)
+                global neule   # e
+                neule = np.zeros(m_length)
 
-            for item in NEG_words:
+                Xw = word_vec[item2]   # V(w)
 
-                x_vec = np.dot(Xw, word_vec_help[item])
-                q = 1/(1 + np.exp(-1 * x_vec))
+                for item in NEG_words:
 
-                if item == word_center:
-                    Lw = 1
-                else:
-                    Lw = 0
-                g = p_learning * (Lw - q)
+                    x_vec = np.dot(Xw, word_vec_help[item])
+                    q = 1/(1 + np.exp(-1 * x_vec))
 
-                neule = neule + g * word_vec_help[item]
+                    if item == word_center:
+                        Lw = 1
+                    else:
+                        Lw = 0
+                    g = p_learning * (Lw - q)
 
-                word_vec_help[item] = word_vec_help[item] + g * Xw
+                    neule = neule + g * word_vec_help[item]
 
-            word_vec[item2] = word_vec[item2] + neule
+                    word_vec_help[item] = word_vec_help[item] + g * Xw
+
+                word_vec[item2] = word_vec[item2] + neule
 
     pass
 
 
 if __name__ == '__main__':
+    start = time.time()
+    print("程序正在执行......")
+
     WordCounter()   # 对数据集进行处理
     initwords()  # 对词向量初始化
-    print('environment_before:', word_vec['environment'])
     SK_NS()
-    print('environment_after:', word_vec['environment'])   #验证
+
+    end = time.time()
+    print("程序运行时间:" + str(end - start) + "s")
 
 
