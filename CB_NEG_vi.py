@@ -8,6 +8,7 @@ from collections import Counter
 
 words_corpus = []  # 语料 ：存储所有的词，不管重复与否
 words_diff = []  # 词汇表
+train_corpus = []   # 训练语料库
 word_times = {}  # 词汇表以及每个词对应的词频
 word_vec = {}  # 词汇表词向量，字典类型
 word_vec_help = {}  # 词的辅助向量，即syn1neg
@@ -28,6 +29,7 @@ table_NEG = []   # 存放负采样表的初始化概率
 
 # 预存sigmoid值
 def sigmoid():
+    print("sigmoid")
     for index in range(EXP_TABLE_SIZE):
         x = np.exp((index / EXP_TABLE_SIZE * 2 - 1) * MAX_EXP)
         sigmoid_list.append(x / (x + 1))
@@ -38,7 +40,7 @@ def WordCounter():
     print("WordCounter")
 
     print("读入数据集")
-    filename = "/sentence.txt"   # 读入数据集
+    filename = "/home/hechaoqun/train_data/data/word2vec/train_corpus.txt"   # 读入数据集
     fr = open(filename, 'r', encoding='UTF-8')
     wordline = fr.readline()   # 逐行读取
     while wordline:
@@ -60,19 +62,28 @@ def WordCounter():
         wordline_stop = fr_stop.readline()
     print("停用词数量:", len(stopwords))
 
+    train_corpus_bef = []
     print("词汇表去低词频")
     word_times_bef = Counter(words_corpus)   # 返回字典，key：无序的word， value：词频
+    for item in words_corpus:
+        if word_times_bef[item] > min_count:
+            train_corpus_bef.append(item)
+    print("去除停用词")
+    for item in train_corpus_bef:
+        if item not in stopwords:
+            train_corpus.append(item)
+    
+    print("生成词汇表")
     for key in word_times_bef.keys():
         if word_times_bef[key] > min_count and key not in stopwords:
-            words_diff.append(key)  # 词汇表
+            words_diff.append(key)   # 无重复的词汇表
             word_times[key] = word_times_bef[key]   # 记录词与其对应的词频
-            print(len(words_diff))
+            print(len(words_diff), key, word_times_bef[key])
 
-    print("语料库大小：", len(words_corpus))  # 语料库大小
+    print("语料库原始大小：", len(words_corpus))  # 语料库大小
     print("词汇表大小：", len(words_diff))  # 词汇表
-
+    print("训练语料库大小", len(train_corpus))
     pass
-
 
 # 词向量初始化（随机），辅助向量初始化（为0）
 def initwords():
@@ -93,19 +104,17 @@ def initwords():
 def get_windows(center):
     res_context = []   # 存放窗口词
 
-    for index in range(1, len(words_corpus) - 1):  # 前面的词
+    for index in range(1, len(train_corpus) - 1):  # 前面的词
         i = center - index
         if i >= 0:
-            if words_corpus[i] in words_diff:
-                res_context.append(words_corpus[i])
+            res_context.append(train_corpus[i])
 
         if len(res_context) == 2 * window_length:
             break
 
         j = center + index
-        if j <= len(words_corpus) - 1:
-            if words_corpus[j] in words_diff:
-                res_context.append(words_corpus[j])
+        if j <= len(train_corpus) - 1:
+            res_context.append(train_corpus[j])
 
         if len(res_context) == 2 * window_length:
             break
@@ -129,6 +138,7 @@ def initweight():
 
 #生成负采样的概率表
 def init_NEG():
+    print("init_NEG")
     # 对词频进行排序（从小到大）
     wordtime = sorted(word_times.items(), key=lambda x: x[1], reverse=False)
     #   排序返回的是 包含元组的列表   [('word', 1), ('supporting', 1), ......,('conduct', 1)]
@@ -151,62 +161,76 @@ def choice_NEG(target_word):
 
     list_NEG = []
     while len(list_NEG) < NEG:   # 5个词
-        m = random.randrange(1, NEG_M)
-        list_NEG.append(table_NEG[m-1])
+        m = random.randrange(0, NEG_M)
+        if table_NEG[m] != target_word:
+            list_NEG.append(table_NEG[m])
 
     list_NEG.append(target_word)
 
     return list_NEG
 
-
+'''
+def sigmoid(inx):
+    #print("sigmoid")
+    if inx >= 0:      #对sigmoid函数的优化，避免了出现极大的数据溢出
+        return 1.0 /(1 + np.exp(-inx))
+    else:
+        return np.exp(inx)/(1 + np.exp(inx))
+'''
 
 def CB_NS():
     print("CB_NS")
-    global sum_index
-    sum_index = 1
-    for index in range(len(words_corpus)):  # 开始选词，找窗口
+    
+    global alpha
 
-        # 只有词频超过这个阀值的词才能被训练
-        if words_corpus[index] in words_diff:
-            print("窗口", index, sum_index)
-            sum_index = sum_index + 1
+    for index in range(len(train_corpus)):  # 开始选词，找窗口
 
-            context = get_windows(index)  # 找窗口
+        print("窗口", index)
+        
+        #更新学习率
+        if index != 0 and index % 10000 == 0:
+            if alpha < 0.0001:
+                alpha = 0.0001
+            else:
+                alpha = alpha * (1 - (index / (len(train_corpus) + 1)))
+        
+        context = get_windows(index)  # 找窗口
+        
 
-            word_center = words_corpus[index]  # 中心词
-            NEG_words = choice_NEG(word_center)  # 负样本词和中心词的集合
+        word_center = train_corpus[index]  # 中心词
+        NEG_words = choice_NEG(word_center)  # 负样本词和中心词的集合
 
-            global neule  # e
-            neule = np.zeros(m_length)
+        global neule  # e
+        neule = np.zeros(m_length)
 
-            Xw = np.zeros(m_length)
+        Xw = np.zeros(m_length)
 
-            for item1 in context:
-                Xw = Xw + word_vec[item1]  # 词向量之和
+        for item1 in context:
+            Xw = Xw + word_vec[item1]  # 词向量之和
 
-            for item in NEG_words:
+        for item in NEG_words:
 
-                x_vec = np.dot(Xw, word_vec_help[item])
-                if x_vec > MAX_EXP:
-                    q = 1
-                elif x_vec < -MAX_EXP:
-                    q = 0
-                else:
-                    sigmoid_index = (x_vec + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)
-                    q = sigmoid_list[round(sigmoid_index)]
+            x_vec = np.dot(Xw, word_vec_help[item])
+            if x_vec > MAX_EXP:
+                q = 1
+            elif x_vec < -MAX_EXP:
+                q = 0
+            else:
+                sigmoid_index = (x_vec + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)
+                q = sigmoid_list[int(sigmoid_index)]
 
-                if item == word_center:
-                    Lw = 1
-                else:
-                    Lw = 0
-                g = alpha * (Lw - q)
+            if item == word_center:
+                Lw = 1
+            else:
+                Lw = 0
+            g = alpha * (Lw - q)
 
-                neule = neule + g * word_vec_help[item]
+            neule = neule + g * word_vec_help[item]
 
-                word_vec_help[item] = word_vec_help[item] + g * Xw
+            word_vec_help[item] = word_vec_help[item] + g * Xw
 
-            for item2 in context:
-                word_vec[item2] = word_vec[item2] + neule
+        for item2 in context:
+            word_vec[item2] = word_vec[item2] + neule
 
     pass
 
