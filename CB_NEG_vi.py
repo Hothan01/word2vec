@@ -25,6 +25,7 @@ distance_word_len = {}  # 记录每个Lk的区间大小，只保存最后一个�
 per_distance = {}  # 记录每一个单词的距离大小
 NEG_M = 100000000  # M的大小
 table_NEG = []   # 存放负采样表的初始化概率
+round_count = 4   # 总训练语料轮数
 
 
 # 预存sigmoid值
@@ -83,6 +84,8 @@ def WordCounter():
     print("语料库原始大小：", len(words_corpus))  # 语料库大小
     print("词汇表大小：", len(words_diff))  # 词汇表
     print("训练语料库大小", len(train_corpus))
+    fr.close()
+    fr_stop.close()
     pass
 
 # 词向量初始化（随机），辅助向量初始化（为0）
@@ -169,71 +172,155 @@ def choice_NEG(target_word):
 
     return list_NEG
 
-'''
-def sigmoid(inx):
-    #print("sigmoid")
-    if inx >= 0:      #对sigmoid函数的优化，避免了出现极大的数据溢出
-        return 1.0 /(1 + np.exp(-inx))
-    else:
-        return np.exp(inx)/(1 + np.exp(inx))
-'''
 
 def CB_NS():
     print("CB_NS")
     
     global alpha
 
-    for index in range(len(train_corpus)):  # 开始选词，找窗口
+    for round in range(round_count):
+        print("Round", (round + 1))
 
-        print("窗口", index)
+        for index in range(len(train_corpus)):  # 开始选词，找窗口
         
-        #更新学习率
-        if index != 0 and index % 10000 == 0:
-            if alpha < 0.0001:
-                alpha = 0.0001
-            else:
-                alpha = alpha * (1 - (index / (len(train_corpus) + 1)))
+            #更新学习率
+            if index != 0 and index % 10000 == 0:
+                if alpha < 0.0001:
+                    alpha = 0.0001
+                    print("窗口", index)
+                else:
+                    alpha = alpha * (1 - (index / (len(train_corpus) + 1)))
+                    print("窗口", index)
         
-        context = get_windows(index)  # 找窗口
+            context = get_windows(index)  # 找窗口
         
 
-        word_center = train_corpus[index]  # 中心词
-        NEG_words = choice_NEG(word_center)  # 负样本词和中心词的集合
+            word_center = train_corpus[index]  # 中心词
+            NEG_words = choice_NEG(word_center)  # 负样本词和中心词的集合
 
-        global neule  # e
-        neule = np.zeros(m_length)
+            global neule  # e
+            neule = np.zeros(m_length)
 
-        Xw = np.zeros(m_length)
+            Xw = np.zeros(m_length)
 
-        for item1 in context:
-            Xw = Xw + word_vec[item1]  # 词向量之和
+            for item1 in context:
+                Xw = Xw + word_vec[item1]  # 词向量之和
 
-        for item in NEG_words:
+            for item in NEG_words:
 
-            x_vec = np.dot(Xw, word_vec_help[item])
-            if x_vec > MAX_EXP:
-                q = 1
-            elif x_vec < -MAX_EXP:
-                q = 0
-            else:
-                sigmoid_index = (x_vec + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)
-                q = sigmoid_list[int(sigmoid_index)]
+                x_vec = np.dot(Xw, word_vec_help[item])
+                if x_vec > MAX_EXP:
+                    q = 1
+                elif x_vec < -MAX_EXP:
+                    q = 0
+                else:
+                    sigmoid_index = (x_vec + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)
+                    q = sigmoid_list[int(sigmoid_index)]
 
-            if item == word_center:
-                Lw = 1
-            else:
-                Lw = 0
-            g = alpha * (Lw - q)
+                if item == word_center:
+                    Lw = 1
+                else:
+                    Lw = 0
+                g = alpha * (Lw - q)
 
-            neule = neule + g * word_vec_help[item]
+                neule = neule + g * word_vec_help[item]
 
-            word_vec_help[item] = word_vec_help[item] + g * Xw
+                word_vec_help[item] = word_vec_help[item] + g * Xw
 
-        for item2 in context:
-            word_vec[item2] = word_vec[item2] + neule
+            for item2 in context:
+                word_vec[item2] = word_vec[item2] + neule
 
     pass
 
+def cos_like(x, y):  # 计算余弦相似度函数
+    tx = np.array(x)
+    ty = np.array(y)
+    cos1 = np.sum(tx * ty)   # 对应项相乘
+    cos21 = np.sqrt(sum(tx ** 2))   # 计算方法以及逻辑没错
+    cos22 = np.sqrt(sum(ty ** 2))
+    return cos1 / float(cos21 * cos22)
+
+
+def similarity():   # 计算词相似度，利用相关系数
+    print("计算词相似度")
+    fr_s = open("/home/hechaoqun/train_data/data/word2vec/wordsim-353.txt", 'r', encoding='UTF-8')
+    train_vec2 = []   #人为标注
+    train_vec1 = []   #cos
+
+    wordline = fr_s.readline()  # 逐行读取
+    while wordline:
+        data =  wordline.strip().split()
+        w1 = data[0]
+        w2 = data[1]
+        num = float(data[2])
+        if word_times.get(w1) and word_times.get(w2):
+            train_vec1.append(cos_like(word_vec[w1], word_vec[w2]))
+            train_vec2.append(num)
+
+        wordline = fr_s.readline()
+
+    m1 = np.array(train_vec1)
+    m2 = np.array(train_vec2)
+    print(np.corrcoef(m1, m2))
+    print("词相似度为 ", np.corrcoef(m1, m2)[0][1])  # 计算相关系数
+    fr_s.close()   # 关闭文件
+
+    pass
+
+
+def analogy():
+    print("计算类比度")
+    fr_a = open("/home/hechaoqun/train_data/data/word2vec/questions-words.txt", 'r', encoding='UTF-8')
+    qk = []
+    wordline = fr_a.readline()  # 逐行读取
+    while wordline:
+        data = wordline.strip().split()
+        wordline = fr_a.readline()
+        a1 = data[0]
+        if a1 == ':':
+            continue
+        a2 = data[1]
+        b1 = data[2]
+        b2 = data[3]
+        if word_times.get(a1) and word_times.get(a2) and word_times.get(b1) and word_times.get(b2):
+            qk.append(data)
+
+    global count_per   # 统计成功的数量
+    count_per = 0
+    for list_temp in qk:
+        a1 = list_temp[0]
+        a2 = list_temp[1]
+        b1 = list_temp[2]
+        b2 = list_temp[3]
+
+        left_part = word_vec[a1] - word_vec[a2] + word_vec[b1]   # 左边
+        right_part = word_vec[b2]   # 右边
+        best_cos = cos_like(left_part, right_part)   # 最符合的,角度越小，值越大
+
+        goal = b2
+        for item in words_diff:
+            item_cos = cos_like(left_part, word_vec[item])
+            if item_cos > best_cos and item != b2:
+                goal = item
+                break
+        if goal == b2:
+            count_per = count_per + 1
+
+    print("类比度为 ", count_per / len(qk))
+
+    fr_a.close()
+    pass
+
+def op_word2vec():
+    op = open('./op.txt', 'w', encoding='UTF-8')
+    for index in range(len(words_diff)):
+        vec = word_vec[words_diff[index]]
+        s = str(index) + " " + words_diff[index]
+        s = s + " " + str(vec).replace('[', '').replace(']', '').replace("'", '').replace(',', '') + '\n'
+        op.write(s)
+
+    op.close()
+    pass
 
 if __name__ == '__main__':
     start = time.time()
@@ -247,6 +334,10 @@ if __name__ == '__main__':
 
 
     CB_NS()   #开始训练
+    
+    similarity()   #计算词相似度
+    analogy()   # 计算类比度
+    op_word2vec()
 
     end = time.time()
     print("程序运行时间:" + str(end - start) + "s")
