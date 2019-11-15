@@ -5,6 +5,10 @@ import math
 import random
 import time
 from collections import Counter
+import os
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
 words_corpus = []  # 语料 ：存储所有的词，不管重复与否
 words_diff = []  # 词汇表
@@ -13,19 +17,22 @@ word_times = {}  # 词汇表以及每个词对应的词频
 word_vec = {}  # 词汇表词向量，字典类型
 word_vec_help = {}  # 词的辅助向量，即syn1neg
 m_length = 100  # 词向量的维度
+global alpha
 alpha = 0.05  # 学习率   CBOW模式下默认是0.05
-window_length = 3  # 窗口大小
+window_length = 5  # 窗口大小
 min_count = 5  # 最小词频阈值，低于这个频率的词会被移除词汇表
 EXP_TABLE_SIZE = 1000   # 摘自源码
 MAX_EXP = 6   # 摘自源码
 sigmoid_list = []   # 存放sigmoid值
 count_word_len = {}  # 统计词汇表的每一个Lk,即len(wj)之和
-NEG = 5  # NEG(w)的大小
+NEG = 8  # NEG(w)的大小
 distance_word_len = {}  # 记录每个Lk的区间大小，只保存最后一个值
 per_distance = {}  # 记录每一个单词的距离大小
 NEG_M = 100000000  # M的大小
 table_NEG = []   # 存放负采样表的初始化概率
-round_count = 4   # 总训练语料轮数
+round_count = 1   # 总训练语料轮数
+MAX_RAND = 65536   #最大随机数
+sample = 0.001   # 高频词下采样阈值
 
 
 # 预存sigmoid值
@@ -35,6 +42,16 @@ def sigmoid():
         x = np.exp((index / EXP_TABLE_SIZE * 2 - 1) * MAX_EXP)
         sigmoid_list.append(x / (x + 1))
 
+#对高频词进行二次采样的词频统计
+def initsubp(train_corpus_bef):
+    print("initsubp")
+    times = Counter(train_corpus_bef)  # 统计词频字典
+    f_w = {} # 返回字典
+
+    for item in times.keys():
+        f_w[item] = times[item] / len(train_corpus_bef)  # 计算每一个词的f(w)
+
+    return f_w
 
 # 统计词频，去重，筛选最小词阈值以及高频词（停用词）
 def WordCounter():
@@ -52,47 +69,51 @@ def WordCounter():
 
     print("语料库大小：", len(words_corpus))
 
-    stopwords = []   # 停用词
-    print("读取停用词")
-    filename_stop = "./english"
-    fr_stop = open(filename_stop, 'r', encoding='UTF-8')
-    wordline_stop = fr_stop.readline()
-    while wordline_stop:
-        for item in wordline_stop.strip().split():
-            stopwords.append(item)
-        wordline_stop = fr_stop.readline()
-    print("停用词数量:", len(stopwords))
-
     train_corpus_bef = []
     print("词汇表去低词频")
     word_times_bef = Counter(words_corpus)   # 返回字典，key：无序的word， value：词频
     for item in words_corpus:
         if word_times_bef[item] > min_count:
             train_corpus_bef.append(item)
-    print("去除停用词")
+    
+    stopwords = initsubp(train_corpus_bef)   # 不是停用词，只是词频字典
+
+    print("高频词下采样")
     for item in train_corpus_bef:
-        if item not in stopwords:
+        ran = (sample / stopwords[item]) ** 0.5 + (sample / stopwords[item])
+        r = random.random()
+        if r <= ran:
             train_corpus.append(item)
     
+    words_diff_bef = Counter(train_corpus)
     print("生成词汇表")
-    for key in word_times_bef.keys():
-        if word_times_bef[key] > min_count and key not in stopwords:
+    for key in words_diff_bef.keys():
+        if not word_times.get(key):
             words_diff.append(key)   # 无重复的词汇表
-            word_times[key] = word_times_bef[key]   # 记录词与其对应的词频
-            print(len(words_diff), key, word_times_bef[key])
+            word_times[key] = words_diff_bef[key]   # 记录词与其对应的词频
 
     print("语料库原始大小：", len(words_corpus))  # 语料库大小
     print("词汇表大小：", len(words_diff))  # 词汇表
     print("训练语料库大小", len(train_corpus))
     fr.close()
-    fr_stop.close()
+    #fr_stop.close()
     pass
 
 # 词向量初始化（随机），辅助向量初始化（为0）
+
+def rand_hun():
+    res = []
+    for i in range(m_length):
+        r = random.randint(0, MAX_RAND)
+        num = (r / MAX_RAND) - 0.5
+        res.append(num / m_length)
+    return res
+
 def initwords():
     print("initwords")
     for item in words_diff:
-        word_vec[item] = np.random.random((1, m_length))[0] / m_length
+        word_vec[item] = np.array(rand_hun())
+        #word_vec[item] = np.random.random((1, m_length))[0] / m_length
         # 代表生成 1 行 m_length 列的浮点数，浮点数都是从0-1中随机。
         # 为什么要在这里加个0呢？
         '''
@@ -106,20 +127,20 @@ def initwords():
 # 得到2*window_length 个上下文词
 def get_windows(center):
     res_context = []   # 存放窗口词
-
+    window_num = random.randint(1, window_length)
     for index in range(1, len(train_corpus) - 1):  # 前面的词
         i = center - index
         if i >= 0:
             res_context.append(train_corpus[i])
 
-        if len(res_context) == 2 * window_length:
+        if len(res_context) == 2 * window_num:
             break
 
         j = center + index
         if j <= len(train_corpus) - 1:
             res_context.append(train_corpus[j])
 
-        if len(res_context) == 2 * window_length:
+        if len(res_context) == 2 * window_num:
             break
 
     return res_context  # 返回的是word 列表
@@ -175,8 +196,6 @@ def choice_NEG(target_word):
 
 def CB_NS():
     print("CB_NS")
-    
-    global alpha
 
     for round in range(round_count):
         print("Round", (round + 1))
@@ -205,7 +224,8 @@ def CB_NS():
 
             for item1 in context:
                 Xw = Xw + word_vec[item1]  # 词向量之和
-
+            
+            Xw = Xw / len(context)   # 求平均
             for item in NEG_words:
 
                 x_vec = np.dot(Xw, word_vec_help[item])
@@ -229,7 +249,9 @@ def CB_NS():
 
             for item2 in context:
                 word_vec[item2] = word_vec[item2] + neule
-
+    
+        similarity()   #计算词相似度
+        analogy()   # 计算类比度
     pass
 
 def cos_like(x, y):  # 计算余弦相似度函数
@@ -335,9 +357,9 @@ if __name__ == '__main__':
 
     CB_NS()   #开始训练
     
-    similarity()   #计算词相似度
-    analogy()   # 计算类比度
-    op_word2vec()
+    #similarity()   #计算词相似度
+    #analogy()   # 计算类比度
+    #op_word2vec()
 
     end = time.time()
     print("程序运行时间:" + str(end - start) + "s")
