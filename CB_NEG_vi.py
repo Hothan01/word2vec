@@ -8,7 +8,7 @@ from collections import Counter
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 words_corpus = []  # 语料 ：存储所有的词，不管重复与否
 words_diff = []  # 词汇表
@@ -17,8 +17,7 @@ word_times = {}  # 词汇表以及每个词对应的词频
 word_vec = {}  # 词汇表词向量，字典类型
 word_vec_help = {}  # 词的辅助向量，即syn1neg
 m_length = 100  # 词向量的维度
-global alpha
-alpha = 0.05  # 学习率   CBOW模式下默认是0.05
+starting_alpha = 0.05  # 学习率   CBOW模式下默认是0.05
 window_length = 5  # 窗口大小
 min_count = 5  # 最小词频阈值，低于这个频率的词会被移除词汇表
 EXP_TABLE_SIZE = 1000   # 摘自源码
@@ -30,7 +29,7 @@ distance_word_len = {}  # 记录每个Lk的区间大小，只保存最后一个�
 per_distance = {}  # 记录每一个单词的距离大小
 NEG_M = 100000000  # M的大小
 table_NEG = []   # 存放负采样表的初始化概率
-round_count = 1   # 总训练语料轮数
+round_count = 3   # 总训练语料轮数
 MAX_RAND = 65536   #最大随机数
 sample = 0.001   # 高频词下采样阈值
 
@@ -196,19 +195,25 @@ def choice_NEG(target_word):
 
 def CB_NS():
     print("CB_NS")
+    
+    global alpha
+    alpha = starting_alpha
+    global word_counting
+    word_counting = 0
 
     for round in range(round_count):
         print("Round", (round + 1))
 
         for index in range(len(train_corpus)):  # 开始选词，找窗口
         
-            #更新学习率
-            if index != 0 and index % 10000 == 0:
-                if alpha < 0.0001:
-                    alpha = 0.0001
+            #更新学习i率
+            word_counting += 1
+            if word_counting % 10000 == 0:
+                if alpha < 0.0001 * starting_alpha:
+                    alpha = 0.0001 * starting_alpha
                     print("窗口", index)
                 else:
-                    alpha = alpha * (1 - (index / (len(train_corpus) + 1)))
+                    alpha = starting_alpha * (1 - (index / (len(train_corpus) + 1)))
                     print("窗口", index)
         
             context = get_windows(index)  # 找窗口
