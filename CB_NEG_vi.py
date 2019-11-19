@@ -8,7 +8,7 @@ from collections import Counter
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 words_corpus = []  # 语料 ：存储所有的词，不管重复与否
 words_diff = []  # 词汇表
@@ -61,7 +61,6 @@ def WordCounter():
     fr = open(filename, 'r', encoding='UTF-8')
     wordline = fr.readline()   # 逐行读取
     while wordline:
-        print("读取数据集")
         for item in wordline.strip().split():
             words_corpus.append(item)  # 语料库
         wordline = fr.readline()
@@ -209,12 +208,10 @@ def CB_NS():
             #更新学习i率
             word_counting += 1
             if word_counting % 10000 == 0:
+                alpha = starting_alpha * (1 - (word_counting / (len(train_corpus) + 1)))
+                print("窗口", index)
                 if alpha < 0.0001 * starting_alpha:
                     alpha = 0.0001 * starting_alpha
-                    print("窗口", index)
-                else:
-                    alpha = starting_alpha * (1 - (index / (len(train_corpus) + 1)))
-                    print("窗口", index)
         
             context = get_windows(index)  # 找窗口
         
@@ -262,10 +259,11 @@ def CB_NS():
 def cos_like(x, y):  # 计算余弦相似度函数
     tx = np.array(x)
     ty = np.array(y)
-    cos1 = np.sum(tx * ty)   # 对应项相乘
-    cos21 = np.sqrt(sum(tx ** 2))   # 计算方法以及逻辑没错
-    cos22 = np.sqrt(sum(ty ** 2))
-    return cos1 / float(cos21 * cos22)
+    cos_value = float(np.dot(tx, ty) / (np.linalg.norm(tx) * np.linalg.norm(ty)))
+    #cos1 = np.sum(tx * ty)   # 对应项相乘
+    #cos21 = np.sqrt(sum(tx ** 2))   # 计算方法以及逻辑没错
+    #cos22 = np.sqrt(sum(ty ** 2))
+    return cos_value
 
 
 def similarity():   # 计算词相似度，利用相关系数
@@ -312,28 +310,32 @@ def analogy():
         if word_times.get(a1) and word_times.get(a2) and word_times.get(b1) and word_times.get(b2):
             qk.append(data)
 
-    global count_per   # 统计成功的数量
-    count_per = 0
+    global count_analogy   # 统计成功的数量
+    count_analogy = 0
+    
+    print("总对数：", len(qk))
     for list_temp in qk:
         a1 = list_temp[0]
         a2 = list_temp[1]
         b1 = list_temp[2]
         b2 = list_temp[3]
+        
+        left_part = word_vec[a1] - word_vec[a2] + word_vec[b2]   # 左边
+        best_cos = cos_like(left_part, word_vec[b1])   # 最符合的,角度越小，值越大
+        best_right = b1
 
-        left_part = word_vec[a1] - word_vec[a2] + word_vec[b1]   # 左边
-        right_part = word_vec[b2]   # 右边
-        best_cos = cos_like(left_part, right_part)   # 最符合的,角度越小，值越大
-
-        goal = b2
         for item in words_diff:
             item_cos = cos_like(left_part, word_vec[item])
-            if item_cos > best_cos and item != b2:
-                goal = item
+            if item_cos > best_cos:
+                best_right = item
                 break
-        if goal == b2:
-            count_per = count_per + 1
+        
+        if best_right == b1:
+            count_analogy = count_analogy + 1
+            print('Num ', count_analogy)
 
-    print("类比度为 ", count_per / len(qk))
+    res_analogy = count_analogy / len(qk)
+    print("类比度为 ", res_analogy)
 
     fr_a.close()
     pass
