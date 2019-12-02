@@ -198,7 +198,7 @@ def choice_NEG(target_word):
 
 
 def SK_NS():
-    print("CB_NS")
+    print("SK_NS")
 
     global alpha
     alpha = starting_alpha
